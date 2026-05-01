@@ -59,6 +59,15 @@ tkn version               # Client version: 0.38+
 
 A local Docker registry lets the pipeline push images that Kind can pull. This makes the full flow work end-to-end.
 
+The registry is reachable two ways:
+
+| Address | Who uses it | When |
+|---|---|---|
+| `localhost:5001` | You, from your Mac/Linux host | Browsing the registry, e.g. `curl http://localhost:5001/v2/_catalog` |
+| `kind-registry:5000` | Pods inside the Kind cluster | Pipeline pushes here, Kubernetes pulls from here |
+
+Pods cannot resolve `localhost:5001` — `localhost` inside a pod is the pod itself, not your host. So **inside the cluster everything uses `kind-registry:5000`**.
+
 Save this as `setup-kind.sh` in the project root:
 
 ```bash
@@ -250,6 +259,8 @@ kubectl get svc -l eventlistener=github-push-listener
 
 ## Part 6: Trigger the Pipeline
 
+> **Before triggering:** the pipeline clones from your GitHub remote, so make sure your changes are committed and pushed. Run `git push origin main` if anything is uncommitted — otherwise the build will fail on a missing `package.json`.
+
 You have three options. All three run the same pipeline — they differ only in how the PipelineRun is created.
 
 ### Option A: Direct PipelineRun (simplest — no triggers involved)
@@ -272,7 +283,7 @@ spec:
     - name: revision
       value: main
     - name: image-name
-      value: "localhost:5001/nextjs-app"
+      value: "kind-registry:5000/nextjs-app"
     - name: image-tag
       value: direct-test
     - name: app-name
@@ -574,7 +585,7 @@ spec:
     - name: revision
       value: main
     - name: image-name
-      value: "localhost:5001/nextjs-app"
+      value: "kind-registry:5000/nextjs-app"
     - name: image-tag
       value: v2
     - name: app-name
@@ -633,8 +644,10 @@ Kind Cluster (tekton-test)
 │   ├── Pods: nextjs-app-xxxxx (actual running containers)
 │   └── Service: nextjs-app (port 80 → pod port 3000)
 │
-└── External: kind-registry container (localhost:5001)
-    └── Stores built Docker images (localhost:5001/nextjs-app:tag)
+└── External: kind-registry container
+    ├── localhost:5001  (host-side access for you)
+    └── kind-registry:5000  (cluster-side access for pipeline + kubelet)
+        Stores built Docker images (kind-registry:5000/nextjs-app:tag)
 
 Your browser
   └── kubectl port-forward -n dev svc/nextjs-app 3000:80
@@ -737,6 +750,37 @@ curl -s http://localhost:5001/v2/nextjs-app/tags/list
 
 # Check the pod error
 kubectl describe pod -n dev -l app=nextjs-app
+```
+
+### `build-app` fails with "package.json not found" / ENOENT
+
+The pipeline clones the **remote** `main` branch — not your local working tree. If you have uncommitted/unpushed changes, the clone won't include them.
+
+```bash
+git status                  # any "untracked files"? commit and push them
+git log origin/main -1      # confirm the commit you expect is on the remote
+git push origin main
+```
+
+Then re-trigger the pipeline.
+
+### `build-image` fails with "connection refused" to `localhost:5001`
+
+The pod is trying to reach `localhost:5001`, but inside a pod `localhost` is the pod itself. Use `kind-registry:5000` instead — that's the registry's hostname on the Kind Docker network.
+
+Make sure your PipelineRun (or TriggerTemplate) sets:
+
+```yaml
+- name: image-name
+  value: "kind-registry:5000/nextjs-app"
+```
+
+### `deploy` fails with `bitnami/kubectl` ImagePull error
+
+Bitnami sunset their public images. The deploy task now uses `alpine/k8s:1.29.4`. If you see this error, re-apply the latest task:
+
+```bash
+kubectl apply -f tekton/tasks/kubernetes-deploy.yaml
 ```
 
 ### Webhook curl returns 403 or no response

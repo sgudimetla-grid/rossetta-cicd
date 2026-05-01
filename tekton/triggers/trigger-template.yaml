@@ -40,7 +40,7 @@ spec:
           - name: revision
             value: $(tt.params.git-revision)
           - name: image-name
-            value: "localhost:5001/nextjs-app"
+            value: "kind-registry:5000/nextjs-app"
           - name: image-tag
             value: $(tt.params.commit-sha)
           - name: app-name
