@@ -142,6 +142,43 @@ docker ps --filter name=kind-registry --format "{{.Names}}: {{.Status}}"
 # kind-registry: Up 30 seconds
 ```
 
+### 2.1 Teach the cluster that `kind-registry:5000` is HTTP (one-time per cluster)
+
+`setup-kind.sh` configures containerd to recognize `localhost:5001` as an insecure (HTTP) registry — but pods cannot reach `localhost:5001` (their `localhost` is the pod itself). Pods and Kubernetes pull from `kind-registry:5000` instead, and containerd needs to know **that** name is also HTTP. Without this step you will get:
+
+```
+ImagePullBackOff
+http: server gave HTTP response to HTTPS client
+```
+
+Run this patch every time you create a fresh Kind cluster:
+
+```bash
+docker exec tekton-test-control-plane sh -c 'awk "
+/\[plugins\.\"io\.containerd\.grpc\.v1\.cri\"\.registry\.mirrors\]/ {
+  print
+  print \"        [plugins.\\\"io.containerd.grpc.v1.cri\\\".registry.mirrors.\\\"kind-registry:5000\\\"]\"
+  print \"          endpoint = [\\\"http://kind-registry:5000\\\"]\"
+  next
+}
+{ print }
+" /etc/containerd/config.toml > /tmp/config.toml && mv /tmp/config.toml /etc/containerd/config.toml'
+
+docker exec tekton-test-control-plane systemctl restart containerd
+sleep 5
+kubectl get nodes
+```
+
+Verify the mirror is now registered:
+
+```bash
+docker exec tekton-test-control-plane grep -A6 "registry.mirrors" /etc/containerd/config.toml
+```
+
+You should see entries for **both** `localhost:5001` and `kind-registry:5000`, each pointing to `http://kind-registry:5000`.
+
+> If you'd rather not run this patch manually each time, add the same mirror block to `setup-kind.sh` inside the `containerdConfigPatches` section so it's baked into every new cluster.
+
 ---
 
 ## Part 3: Install Tekton in the Cluster
@@ -774,6 +811,16 @@ Make sure your PipelineRun (or TriggerTemplate) sets:
 - name: image-name
   value: "kind-registry:5000/nextjs-app"
 ```
+
+### Deployed pod stuck in `ImagePullBackOff` with "HTTP response to HTTPS client"
+
+Containerd doesn't know `kind-registry:5000` is an HTTP registry, so it tries HTTPS and fails. Run the one-time containerd patch from **Part 2.1**, then delete the stuck pod so it retries:
+
+```bash
+kubectl delete pod -n dev -l app=nextjs-app
+```
+
+This happens after every `kind delete cluster` + recreate, unless you've added the mirror block directly into `setup-kind.sh`.
 
 ### `deploy` fails with `bitnami/kubectl` ImagePull error
 

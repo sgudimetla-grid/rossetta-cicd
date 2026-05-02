@@ -11,7 +11,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' "${REG_NAME}" 2>/dev/null || true
     --network bridge \
     --name "${REG_NAME}" \
     registry:2
-  echo "Registry started on localhost:${REG_PORT} (host) / ${REG_NAME}:5000 (cluster)"
+  echo "Registry started on localhost:${REG_PORT}"
 else
   echo "Registry already running"
 fi
@@ -23,8 +23,6 @@ apiVersion: kind.x-k8s.io/v1alpha4
 containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:${REG_PORT}"]
-      endpoint = ["http://${REG_NAME}:5000"]
-    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."${REG_NAME}:5000"]
       endpoint = ["http://${REG_NAME}:5000"]
 YAML
 
@@ -48,8 +46,6 @@ YAML
 
 echo ""
 echo "=== Done ==="
-echo "Cluster:  kind-tekton-test"
-echo "Registry: localhost:${REG_PORT}        (host-side, e.g. curl http://localhost:${REG_PORT}/v2/_catalog)"
-echo "          ${REG_NAME}:5000             (cluster-side, used by pipelines and Kubernetes)"
-echo ""
-echo "Use '${REG_NAME}:5000/nextjs-app' as the image name in pipelines."
+echo "Cluster: kind-tekton-test"
+echo "Registry: localhost:${REG_PORT}"
+echo "Use 'localhost:${REG_PORT}/nextjs-app' as the image name in pipelines"
